@@ -87,15 +87,18 @@ class QLearning:
         
         return action, self.actions.index(action)
     
-    def _simulate_one_episode(self, n, epsilon):
+    def _train_one_episode(self, n, epsilon):
         state = self.env.reset()
-        episode = []
         timesteps = 0
         episode_ended = False
         
         while not episode_ended:
-            action, a_idx = self._get_action(state, epsilon)
-            _, reward, goal, current_state, episode_ended = self.env.step(action=action)
+            action, action_idx = self._get_action(state, epsilon)
+            _, reward, goal, next_state, episode_ended = self.env.step(action=action)
+            
+            self.Q[state][action_idx] = self.Q[state][action_idx] + self.step_size * np.float64(
+                reward + (self.gamma * max(self.Q[next_state]) - self.Q[state][action_idx])
+            )
             
             if reward in self.negative_rewards:
                 self.logs[n]['bad_state_count'] += 1
@@ -105,33 +108,23 @@ class QLearning:
             self.logs[n]['cumulative_reward'] = self.logs[n]['reward']
             self.logs[n]['goal_achieved'] = goal
             
-            # save timestep information
-            episode.append((state, action, reward))
-            state = current_state
+            state = next_state
             timesteps += 1
-            
-        self.logs[n]['timesteps'] = timesteps
-        
-        return episode
-    
-    def _update_Q(self, episode):
-        for timestep in range(len(episode)):
-            state, action, reward = episode[timestep]
-            action_idx = self.actions.index(action)
-            self.Q[state][action_idx] = self.Q[state][action_idx] + self.step_size * np.float64(reward + (self.gamma * max(self.Q[state]) - self.Q[state][action_idx]))
             
             # update policy
             self.policy[state] = self.actions[
                 np.argmax(self.Q[state])
             ]
+            
+        self.logs[n]['timesteps'] = timesteps
+              
                 
     def run(self):
         epsilon = self.epsilon_start
         for episode_no in range(self.episodes):
             epsilon = max(epsilon*self.epsilon_decay, self.epsilon_min)
             self.logs[episode_no]['epsilon'] = epsilon
-            episode = self._simulate_one_episode(epsilon=epsilon, n=episode_no)
-            self._update_Q(episode)
+            self._train_one_episode(epsilon=epsilon, n=episode_no)
             
             if episode_no > 0:
                 self.logs[episode_no]['cumulative_reward'] += \

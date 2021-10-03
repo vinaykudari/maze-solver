@@ -34,7 +34,7 @@ class MonteCarlo:
                 'goal_achieved': False,
                 'reward': 0,
                 'cumulative_reward': 0,
-                'epsilon': None
+                'epsilon': None,
             },
         )
         

@@ -4,13 +4,20 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import numpy as np
 
+class Rewards:
+    GOAL = 20.0
+    WALL = -5.0
+    OUT_OF_BOUND = -0.75
+    VISITED = -0.85
+    LEGAL = -0.05
+
 class GridEnv(OpenAIEnv):
     def __init__(
         self,
         maze,
         is_stochastic,
         action_transitions,
-        max_timesteps=100,
+        max_timesteps=300,
     ):
         self.maze = maze
         self.w, self.h = np.shape(maze)
@@ -90,7 +97,8 @@ class GridEnv(OpenAIEnv):
     def _move_agent(self, x, y):
         goal_achieved = False
         # reward when the agent doesnt ends up in goal state
-        reward = -0.05
+        reward = Rewards.LEGAL
+        
         if self.state[self.agent_pos[0]][self.agent_pos[1]] == 0.65:
             self.state[self.agent_pos[0]][self.agent_pos[1]] = 0.0
         
@@ -104,14 +112,14 @@ class GridEnv(OpenAIEnv):
         # clip out-of-bound positions to the edges
         if x >= self.h:
             # reward when the agent goes out of bound
-            reward = -0.75
+            reward = Rewards.OUT_OF_BOUND
             x = self.h-1
         else:
             x = max(0, x)
             
         if y >= self.w:
             # reward when the agent goes out of bound
-            reward = -0.75
+            reward = Rewards.OUT_OF_BOUND
             y = self.w-1
         else:
             y = max(0, y)
@@ -123,7 +131,7 @@ class GridEnv(OpenAIEnv):
         if self.state[x][y] == 0.0:
             self.state[x][y] = 0.65
             # reward when the agent hits the wall
-            reward = -5.0
+            reward = Rewards.WALL
         else:   
             # set agent color in the visualisation
             self.state[x][y] = 0.2
@@ -131,13 +139,13 @@ class GridEnv(OpenAIEnv):
         
         if self.visited[(x, y)]:
             # reward when the agent is traverses the visited states
-            reward = min(-0.85, reward)
+            reward = min(Rewards.VISITED, reward)
         
         
         if (self.agent_pos == self.goal_pos).all():
             goal_achieved = True
             # reward when the agent reaches goal state
-            reward = 20
+            reward = Rewards.GOAL
             
         return reward, goal_achieved
         
@@ -176,14 +184,17 @@ class GridEnv(OpenAIEnv):
         self.current_action = action
         can_agent_move = True
         goal_achieved = False
-        reason = None
         
         if self.is_stochastic:
-            # make a move according to the transition probability 
-            rand = np.random.uniform(0, 1, 1)
-            reward = -0.15
-            if rand < self.action_transitions[action]:
-                can_agent_move = False
+            # make a move according to the transition probability                 
+            can_agent_move = np.random.choice(
+                [True, False], p=[
+                    self.action_transitions[action],
+                    1-self.action_transitions[action],
+                ],
+            )
+            if can_agent_move == False:
+                reward = Rewards.LEGAL
                 
         if can_agent_move:
             if action.lower() == 'w':
@@ -202,7 +213,7 @@ class GridEnv(OpenAIEnv):
                 reward, goal_achieved = self._move_agent(
                     self.agent_pos[0], self.agent_pos[1]+1
                 )
-        
+
         return reward, goal_achieved
         
     def reset(self):
