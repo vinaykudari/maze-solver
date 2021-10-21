@@ -18,6 +18,7 @@ class GridEnv(OpenAIEnv):
         is_stochastic,
         action_transitions,
         max_timesteps=300,
+        state_as_img=False,
     ):
         self.maze = maze
         self.w, self.h = np.shape(maze)
@@ -36,6 +37,7 @@ class GridEnv(OpenAIEnv):
         self.agent_pos = np.array([0, 0])
         self.current_state = (self.agent_pos[0], self.agent_pos[1])
         self.max_timesteps = max_timesteps
+        self.state_as_img = state_as_img
         
         # set random goal position
         self.goal_pos = np.array([self.w-1, self.h-1])
@@ -46,24 +48,26 @@ class GridEnv(OpenAIEnv):
         
         fig, ax, mesh = self._set_figure(
             self.state,
-            self.w,
-            self.h,
-            self.observation_space.n,
-            self.n_actions,
             show_fig=True,
         )
         
     @staticmethod
+    def _get_plot_img(fig):
+        fig.canvas.draw()
+        return PIL.Image.frombytes(
+            'RGB',
+            fig.canvas.get_width_height(),
+            fig.canvas.tostring_rgb(),
+        )
+        
     def _set_figure(
+        self,
         grid,
-        w,
-        h,
-        states,
-        actions,
         n=1,
         m=1,
         figsize=(5, 5),
-        show_fig=False
+        show_fig=False,
+        show_title=False,
     ):
         fig, ax = plt.subplots(n, m, figsize=figsize)
         mesh = []
@@ -71,23 +75,24 @@ class GridEnv(OpenAIEnv):
         # for single plot
         if n == 1 and m == 1:
             # Set grid size
-            ax.set_xticks(np.arange(0, w, 1))
-            ax.set_yticks(np.arange(0, h, 1))
+            ax.set_xticks(np.arange(0, self.w, 1))
+            ax.set_yticks(np.arange(0, self.h, 1))
             mesh.append(ax.pcolormesh(grid, cmap ='tab20c'))
             plt.grid()
         else:
             for i in range(n):
                 for j in range(m):
-                    ax[i][j].set_xticks(np.arange(0, w, 1))
-                    ax[i][j].set_yticks(np.arange(0, h, 1))
+                    ax[i][j].set_xticks(np.arange(0, self.w, 1))
+                    ax[i][j].set_yticks(np.arange(0, self.h, 1))
                     mesh.append(ax[i][j].pcolormesh(grid, cmap ='tab20c'))
                     ax[i][j].grid()
-                    
-        plt.title(
-            f'#states: {states}, #actions: {actions}',
-            y=-0.01,
-            color='gray',
-        )
+        
+        if show_title:
+            plt.title(
+                f'#states: {self.observation_space.n}, #actions: {self.n_actions}',
+                y=-0.01,
+                color='gray',
+            )
         
         if not show_fig:
             plt.close(fig)
@@ -96,7 +101,7 @@ class GridEnv(OpenAIEnv):
     
     def _move_agent(self, x, y):
         goal_achieved = False
-        # reward when the agent doesnt ends up in goal state
+        # reward when the agent doesnt end up in goal state
         reward = Rewards.LEGAL
         
         if self.state[self.agent_pos[0]][self.agent_pos[1]] == 0.65:
@@ -150,14 +155,9 @@ class GridEnv(OpenAIEnv):
         return reward, goal_achieved
         
 
-    
     def _render_plots(self, n, m, figsize):
         fig, ax, mesh = self._set_figure(
             self.state,
-            self.w,
-            self.h,
-            self.observation_space.n,
-            self.n_actions,
             n,
             m,
             figsize, 
@@ -172,7 +172,7 @@ class GridEnv(OpenAIEnv):
         plt.show()
         
     
-    def _update_fig(self, i, mesh, ax, action_seq):
+    def _update_fig(self, i, mesh, ax, action_seq=None):
         action = action_seq[i] if action_seq else None
         action, reward, _, _, _ = self.step(action=action)
         self.state[self.goal_pos[0]][self.goal_pos[1]] = 0.4
@@ -253,31 +253,26 @@ class GridEnv(OpenAIEnv):
                 
         if goal_achieved:
             done = True
+            
+        if not self.state_as_img:
+            curr_state = self.current_state
+        else:
+            fig, _, _ = self._set_figure(self.state)
+            curr_state = self._get_plot_img(fig)
                                                                    
-        return action, reward, goal_achieved, self.current_state, done
+        return action, reward, goal_achieved, curr_state, done
     
     def render(self, show=False):
         fig, ax, mesh = self._set_figure(
             self.state,
-            self.w,
-            self.h,
-            self.observation_space.n,
-            self.n_actions,
             show_fig=True,
         )
-#         plt.arrow(0.25, 0.5, dx=0.4, dy=0, head_width=0.1, color='white')
         if show:
             plt.show()
         
     def animate(self, action_seq=None, filename='animation.mp4'):
         self.reset()
-        fig, ax, mesh = self._set_figure(
-            self.state,
-            self.w,
-            self.h,
-            self.observation_space.n,
-            self.n_actions,
-        )
+        fig, ax, mesh = self._set_figure(self.state)
         ani = FuncAnimation(
             fig,
             self._update_fig,
