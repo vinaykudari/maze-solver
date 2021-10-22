@@ -19,6 +19,7 @@ class GridEnv(OpenAIEnv):
         action_transitions,
         max_timesteps=300,
         state_as_img=False,
+        full_state=False,
     ):
         self.maze = maze
         self.w, self.h = np.shape(maze)
@@ -38,6 +39,9 @@ class GridEnv(OpenAIEnv):
         self.current_state = (self.agent_pos[0], self.agent_pos[1])
         self.max_timesteps = max_timesteps
         self.state_as_img = state_as_img
+        self.max_reward = Rewards.GOAL
+        self.min_reward = Rewards.WALL
+        self.full_state = full_state
         
         # set random goal position
         self.goal_pos = np.array([self.w-1, self.h-1])
@@ -230,7 +234,15 @@ class GridEnv(OpenAIEnv):
         self.current_state = (self.agent_pos[0], self.agent_pos[1])
         self.visited = {(i, j):False for j in range(self.w) for i in range(self.h)}
         
-        return self.current_state
+        if self.state_as_img:
+            fig, _, _ = self._set_figure(self.state)
+            curr_state = self._get_plot_img(fig)
+        elif self.full_state:
+            curr_state = self.state.flatten()
+        else:
+            curr_state = self.current_state
+        
+        return curr_state
     
     def step(self, action=None):
         done = False
@@ -254,11 +266,13 @@ class GridEnv(OpenAIEnv):
         if goal_achieved:
             done = True
             
-        if not self.state_as_img:
-            curr_state = self.current_state
-        else:
+        if self.state_as_img:
             fig, _, _ = self._set_figure(self.state)
             curr_state = self._get_plot_img(fig)
+        elif self.full_state:
+            curr_state = self.state.flatten()
+        else:
+            curr_state = self.current_state
                                                                    
         return action, reward, goal_achieved, curr_state, done
     
