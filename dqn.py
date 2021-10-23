@@ -34,7 +34,10 @@ class DQN:
         policy_net,
         optimizer, 
         loss_func,
-        w_sync_freq=10,
+        log_freq=10,
+        tau = 1e-3,
+        train_freq=5,
+        w_sync_freq=5,
         batch_size=10,
         memory_size=5000,
         gamma=0.95,
@@ -60,6 +63,7 @@ class DQN:
         self.optimizer = optimizer
         self.loss_func = loss_func
         self.step_size = step_size
+        self.tau = tau
         self.episodes = episodes
         self.epsilon_start = epsilon_start
         self.epsilon_decay = epsilon_decay
@@ -67,6 +71,9 @@ class DQN:
         self.negative_rewards = negative_rewards
         self.eval_episodes = eval_episodes
         self.w_sync_freq = w_sync_freq
+        self.train_freq = train_freq
+        self.log_freq = log_freq
+        self.batch_no = 0
         
         # initialize action-value function
         self.Q = defaultdict(
@@ -124,45 +131,46 @@ class DQN:
     def _store_transition(self, transition):
         self.replay_memory.store(transition)
         
+    def _update_policy(self, state, Q_values):
+        # update policy
+        self.policy[tuple(state)] = self.actions[
+            np.argmax(Q_values)
+        ]
+
     def _train_one_batch(self, transitions, epsilon):
         states, actions, rewards, next_states, goal_achieved = zip(*transitions)
         states = FT(states)
         next_states = FT(next_states)
         actions = T([actions]).view(-1, 1)
         rewards = T([rewards]).view(-1, 1)
-        goal_achieved = T([goal_achieved])
+        goal_achieved = T([goal_achieved]).view(-1, 1).float()
         
-        self.policy_net.train()
-        self.target_net.eval()
-                
-        # print(f'self.policy_net(states) : {self.policy_net(states)}, {self.policy_net(states).shape}')
-        # print(f'actions: {actions}')
+        Q_values = self.policy_net(states)
         
-        predictions = self.policy_net(states).gather(1, actions)
-        # print(f'predictions: {predictions}, {predictions.shape}')
+        predictions = Q_values.gather(1, actions)
+        labels_next = torch.max(self.target_net(next_states), dim=1).values.view(-1, 1).detach()            
+        labels = rewards + (self.gamma * labels_next * (1 - goal_achieved))
         
-
-        labels_next = torch.max(self.target_net(next_states), dim=1).values.view(-1, 1).detach()
-            
-        # print(f'self.target_net(next_states): {self.target_net(next_states)}')
-        # print(f'labels_next: {labels_next}')
-            
-        # print(rewards.shape)
-        labels = rewards + (self.gamma * labels_next)
-
-        # print(f'labels: {labels}, {labels.shape}')
-        # print(predictions.shape, labels.shape)
-        
-        loss = self.loss_func(labels, predictions)
+        loss = self.loss_func(predictions, labels)
         self.optimizer.zero_grad()
         loss.backward()
+        
+        for param in self.policy_net.parameters():
+            param.grad.data.clamp_(-1, 1)
+        
         self.optimizer.step()
-        # print('done')
+        
+        rand = random.randint(0, self.batch_size-1)
+        self._update_policy(states[rand].detach().numpy(), Q_values[rand].detach().numpy())
         
         return loss
         
-    def _sync_weights(self):
-        self.target_net.load_state_dict(self.policy_net.state_dict())
+    def _sync_weights(self, soft=False):
+        if not soft:
+            self.target_net.load_state_dict(self.policy_net.state_dict())
+        else:
+            # @TODO: Implement soft updates
+            pass
         
     def run(self):
         epsilon = self.epsilon_start
@@ -172,6 +180,7 @@ class DQN:
             self.logs[episode_no]['epsilon'] = epsilon
             episode_reward = 0
             episode_loss = 0
+            timestep = 0
             state = self.env.reset()
             
             while not episode_ended:
@@ -179,34 +188,63 @@ class DQN:
                 _, reward, done, next_state, episode_ended = self.env.step(action=action)
                 
                 episode_reward += reward
-                # ensure gradients are well conditioned 
-                clipped_reward = self._clip_reward(reward)
                 
                 self._store_transition(
-                    [state, action_idx, clipped_reward, next_state, done]
+                    [state, action_idx, reward, next_state, done]
                 )
                 
-                if self.replay_memory.can_sample(size=self.batch_size):
+                if self.replay_memory.current_size > self.memory_size:
                     transitions = self.replay_memory.sample(size=self.batch_size)
                     episode_loss += self._train_one_batch(transitions, epsilon)
                     
-#                 print(tuple(state))
-#                 # update policy
-#                 self.policy[tuple(state)] = self.actions[
-#                     np.argmax(self.Q[tuple(state)])
-#                 ]
+                    if self.batch_no % self.w_sync_freq == 0:
+                        self._sync_weights()
+                    self.batch_no += 1
                     
+                timestep += 1
                 state = next_state
-            
-            if episode_no % 10 == 0:
+                
+            if episode_no % self.log_freq == 0 and self.replay_memory.current_size > self.memory_size:
                 print(f'Episode: {episode_no}, Reward: {episode_reward}, Loss: {episode_loss}')
                 
-            if episode_no % self.w_sync_freq == 0:
-                self._sync_weights()
-            
             # save logs for analysis
             self.logs[episode_no]['reward'] = episode_reward
             if episode_no > 0:
                 self.logs[episode_no]['cumulative_reward'] += \
                 self.logs[episode_no-1]['cumulative_reward']
+                
+    def evaluate_one_episode(self, e_num=None, policy=None):
+        action_seq = []
+        timestep = 0
+        done = False
+        state = self.env.reset()
+        if not policy:
+            policy = self.policy
+            
+        while not done:
+            action, reward, goal, state, done = self.env.step(
+                action=self.policy[state],
+            )
+            timestep += 1
+            
+            if e_num is not None:
+                self.eval_logs[e_num]['reward'] += reward
+                self.eval_logs[e_num]['cumulative_reward'] = self.eval_logs[e_num]['reward']
+                self.eval_logs[e_num]['goal_achieved'] = goal
+            
+            action_seq.append(action)
+            
+        return timestep, action_seq
+    
+    def evaluate(self, policy=None):
+        if not policy:
+            policy = self.policy
+        
+        for n in range(self.eval_episodes):
+            timesteps, _ = self.evaluate_one_episode(n, policy)
+            self.eval_logs[n]['timesteps'] = timesteps
+            
+            if n > 0:
+                self.eval_logs[n]['cumulative_reward'] += \
+                self.eval_logs[n-1]['cumulative_reward']
         

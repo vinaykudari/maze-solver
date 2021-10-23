@@ -157,8 +157,6 @@ class QLearning:
             action_seq.append(action)
             
         return timestep, action_seq
-            
-        
     
     def evaluate(self, policy=None):
         if not policy:

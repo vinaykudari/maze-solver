@@ -55,6 +55,11 @@ class GridEnv(OpenAIEnv):
             show_fig=True,
         )
         
+        if full_state:
+            self.n_states = self.observation_space.n
+        else:
+            self.n_states = len(self.current_state)
+        
     @staticmethod
     def _get_plot_img(fig):
         fig.canvas.draw()
