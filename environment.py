@@ -3,6 +3,7 @@ from gym import spaces
 import matplotlib.pyplot as plt 
 from matplotlib.animation import FuncAnimation
 import numpy as np
+import PIL
 
 class Rewards:
     GOAL = 5.0
@@ -54,20 +55,30 @@ class GridEnv(OpenAIEnv):
             self.state,
             show_fig=True,
         )
-        
-        if full_state:
+            
+        if state_as_img:
+            fig, _, _ = self._set_figure(self.state)
+            self.current_state = self._get_plot_img(fig)
+            self.n_states = self.current_state.shape[1] * self.current_state.shape[2]
+        elif full_state:
+            self.current_state = self.maze
             self.n_states = self.observation_space.n
         else:
             self.n_states = len(self.current_state)
         
+        
     @staticmethod
-    def _get_plot_img(fig):
+    def _get_plot_img(fig, as_array=True):
         fig.canvas.draw()
-        return PIL.Image.frombytes(
+        img = PIL.Image.frombytes(
             'RGB',
             fig.canvas.get_width_height(),
             fig.canvas.tostring_rgb(),
         )
+        if as_array:
+            img = np.array(img)
+            img = np.reshape(img, (3, img.shape[0], img.shape[1]))
+        return img
         
     def _set_figure(
         self,
@@ -236,18 +247,17 @@ class GridEnv(OpenAIEnv):
         self.state[self.agent_pos[0]][self.agent_pos[1]] = 0.2
         self.state[self.goal_pos[0]][self.goal_pos[1]] = 0.4
         
-        self.current_state = (self.agent_pos[0], self.agent_pos[1])
         self.visited = {(i, j):False for j in range(self.w) for i in range(self.h)}
         
         if self.state_as_img:
             fig, _, _ = self._set_figure(self.state)
-            curr_state = self._get_plot_img(fig)
+            self.current_state = self._get_plot_img(fig)
         elif self.full_state:
-            curr_state = self.state.flatten()
+            self.current_state = self.state.flatten()
         else:
-            curr_state = self.current_state
+            self.current_state = (self.agent_pos[0], self.agent_pos[1])
         
-        return curr_state
+        return self.current_state
     
     def step(self, action=None):
         done = False
@@ -261,7 +271,6 @@ class GridEnv(OpenAIEnv):
         reward, goal_achieved = self._perform_action(action)
                                                                    
         self.timestep += 1
-        self.current_state = (self.agent_pos[0], self.agent_pos[1])
         self.visited[(self.agent_pos[0],self.agent_pos[1])] = True
         
         if self.max_timesteps:
@@ -273,13 +282,13 @@ class GridEnv(OpenAIEnv):
             
         if self.state_as_img:
             fig, _, _ = self._set_figure(self.state)
-            curr_state = self._get_plot_img(fig)
+            self.current_state = self._get_plot_img(fig)
         elif self.full_state:
-            curr_state = self.state.flatten()
+            self.current_state = self.state.flatten()
         else:
-            curr_state = self.current_state
+            self.current_state = (self.agent_pos[0], self.agent_pos[1])
                                                                    
-        return action, reward, goal_achieved, curr_state, done
+        return action, reward, goal_achieved, self.current_state, done
     
     def render(self, show=False):
         fig, ax, mesh = self._set_figure(

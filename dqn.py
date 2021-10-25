@@ -111,7 +111,7 @@ class DQN:
     def _get_action_probs(self, state, epsilon):
         # initialize episilon probability to all the actions
         probs = np.ones(self.n_actions) * (epsilon / self.n_actions)
-        action_values = self.policy_net.forward(state)
+        action_values = self.policy_net.forward(state.unsqueeze(0))
         best_action = torch.argmax(action_values)
         # initialize 1-epsilon probability to the greedy action
         probs[best_action] = 1 - epsilon + (epsilon / self.n_actions)
