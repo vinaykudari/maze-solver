@@ -161,7 +161,7 @@ class DQN:
         self.optimizer.step()
         
         rand = random.randint(0, self.batch_size-1)
-        self._update_policy(states[rand].detach().numpy(), Q_values[rand].detach().numpy())
+#         self._update_policy(states[rand].detach().numpy(), Q_values[rand].detach().numpy())
         
         return loss
         

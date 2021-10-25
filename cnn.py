@@ -1,10 +1,11 @@
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 class CNN(nn.Module):
     def __init__(self, w, h, input_dim, output_dim):
         super().__init__()
-#         print(f'w: {w}, h: {h}, input_dim: {input_dim}, output_dim: {output_dim}')
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.conv1 = nn.Conv2d(3, 16, kernel_size=5, stride=2)
         self.bn1 = nn.BatchNorm2d(16)
         self.conv2 = nn.Conv2d(16, 32, kernel_size=5, stride=2)
@@ -21,6 +22,7 @@ class CNN(nn.Module):
         self.head = nn.Linear(linear_input_size, output_dim)
 
     def forward(self, x):
+        x.to(self.device)
         x = F.relu(self.bn1(self.conv1(x)))
         x = F.relu(self.bn2(self.conv2(x)))
         x = F.relu(self.bn3(self.conv3(x)))
