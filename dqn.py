@@ -241,8 +241,8 @@ class DQN:
             policy = self.policy
             
         while not done:
-            action, reward, goal, (state, state_img), done = self.env.step(
-                action=self.policy[tuple(state.tolist())],
+            action, reward, goal, state, done = self.env.step(
+                action=self.policy[tuple(state[0].tolist())],
             )
             timestep += 1
             
