@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import numpy as np
 import PIL
+import scipy.interpolate as IP
 
 class Rewards:
     GOAL = 5.0
@@ -18,9 +19,11 @@ class GridEnv(OpenAIEnv):
         maze,
         is_stochastic,
         action_transitions,
+        img_size=(64, 64),
         max_timesteps=300,
-        state_as_img=False,
+        img_state=True,
         full_state=False,
+        greyscale=True,
     ):
         self.maze = maze
         self.w, self.h = np.shape(maze)
@@ -37,12 +40,13 @@ class GridEnv(OpenAIEnv):
         self.state = maze.copy()
         self.visited = {(i, j):False for j in range(self.w) for i in range(self.h)}
         self.agent_pos = np.array([0, 0])
-        self.current_state = (self.agent_pos[0], self.agent_pos[1])
         self.max_timesteps = max_timesteps
-        self.state_as_img = state_as_img
+        self.img_state = img_state
         self.max_reward = Rewards.GOAL
         self.min_reward = Rewards.WALL
         self.full_state = full_state
+        self.greyscale = greyscale
+        self.img_size = img_size
         
         # set random goal position
         self.goal_pos = np.array([self.w-1, self.h-1])
@@ -56,28 +60,41 @@ class GridEnv(OpenAIEnv):
             show_fig=True,
         )
             
-        if state_as_img:
-            fig, _, _ = self._set_figure(self.state)
-            self.current_state = self._get_plot_img(fig)
-            self.n_states = self.current_state.shape[1] * self.current_state.shape[2]
-        elif full_state:
-            self.current_state = self.maze
+        if full_state:
             self.n_states = self.observation_space.n
         else:
-            self.n_states = len(self.current_state)
+            # using agent position to represent current state
+            self.n_states = len(self.agent_pos)
+            
+    def _to_greyscale(self, img, as_array):
+        img = np.asarray(img)        
+        img = np.dot(img[...,:3], [0.5, 1, 0.5])
+        
+        if as_array:
+            img = np.reshape(img, (1, img.shape[0], img.shape[1]))
+            return img
+        
+        return PIL.Image.fromarray(np.uint8(img))
         
         
-    @staticmethod
-    def _get_plot_img(fig, as_array=True):
+    def _get_plot_img(self, fig, as_array=True):
         fig.canvas.draw()
         img = PIL.Image.frombytes(
             'RGB',
             fig.canvas.get_width_height(),
             fig.canvas.tostring_rgb(),
         )
-        if as_array:
-            img = np.array(img)
-            img = np.reshape(img, (3, img.shape[0], img.shape[1]))
+        
+        if self.img_size:
+            img = img.resize(self.img_size)
+
+        if self.greyscale:
+            img = self._to_greyscale(img, as_array)
+        else:
+            if self.as_array:
+                img = np.asarray(img)
+                img = np.reshape(img, (3, img.shape[0], img.shape[1]))
+                
         return img
         
     def _set_figure(
@@ -91,20 +108,22 @@ class GridEnv(OpenAIEnv):
     ):
         fig, ax = plt.subplots(n, m, figsize=figsize)
         mesh = []
+        cmap = 'tab20c'
         
         # for single plot
         if n == 1 and m == 1:
             # Set grid size
             ax.set_xticks(np.arange(0, self.w, 1))
             ax.set_yticks(np.arange(0, self.h, 1))
-            mesh.append(ax.pcolormesh(grid, cmap ='tab20c'))
+            
+            mesh.append(ax.pcolormesh(grid, cmap=cmap))
             plt.grid()
         else:
             for i in range(n):
                 for j in range(m):
                     ax[i][j].set_xticks(np.arange(0, self.w, 1))
                     ax[i][j].set_yticks(np.arange(0, self.h, 1))
-                    mesh.append(ax[i][j].pcolormesh(grid, cmap ='tab20c'))
+                    mesh.append(ax[i][j].pcolormesh(grid, cmap=cmap))
                     ax[i][j].grid()
         
         if show_title:
@@ -249,15 +268,17 @@ class GridEnv(OpenAIEnv):
         
         self.visited = {(i, j):False for j in range(self.w) for i in range(self.h)}
         
-        if self.state_as_img:
-            fig, _, _ = self._set_figure(self.state)
-            self.current_state = self._get_plot_img(fig)
-        elif self.full_state:
-            self.current_state = self.state.flatten()
+        if self.full_state:
+            state = self.state.flatten()
         else:
-            self.current_state = (self.agent_pos[0], self.agent_pos[1])
+            state = self.agent_pos
+            
+        if self.img_state:
+            fig, _, _ = self._set_figure(self.state)
+            state_img = self._get_plot_img(fig)
+            state = (state, state_img)
         
-        return self.current_state
+        return state
     
     def step(self, action=None):
         done = False
@@ -280,15 +301,17 @@ class GridEnv(OpenAIEnv):
         if goal_achieved:
             done = True
             
-        if self.state_as_img:
-            fig, _, _ = self._set_figure(self.state)
-            self.current_state = self._get_plot_img(fig)
-        elif self.full_state:
-            self.current_state = self.state.flatten()
+        if self.full_state:
+            state = self.state.flatten()
         else:
-            self.current_state = (self.agent_pos[0], self.agent_pos[1])
+            state = self.agent_pos
+            
+        if self.img_state:
+            fig, _, _ = self._set_figure(self.state)
+            state_img = self._get_plot_img(fig)
+            state = (state, state_img)
                                                                    
-        return action, reward, goal_achieved, self.current_state, done
+        return action, reward, goal_achieved, state, done
     
     def render(self, show=False):
         fig, ax, mesh = self._set_figure(

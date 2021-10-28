@@ -34,6 +34,7 @@ class DQN:
         policy_net,
         optimizer, 
         loss_func,
+        env_type='image',
         log_freq=10,
         tau = 1e-3,
         train_freq=5,
@@ -50,6 +51,7 @@ class DQN:
         negative_rewards=[-0.75, -0.85, -15.0],
     ):
         self.env = env
+        self.env_type = env_type
         self.gamma = np.float64(gamma)
         self.n_states = self.env.observation_space.n
         self.states = self.env.states
@@ -108,7 +110,7 @@ class DQN:
             reward - self.env.min_reward
         ) / (self.env.max_reward - self.env.min_reward)) - 1
     
-    def _get_action_probs(self, state, epsilon):
+    def _get_action_probs(self, state, epsilon):            
         # initialize episilon probability to all the actions
         probs = np.ones(self.n_actions) * (epsilon / self.n_actions)
         action_values = self.policy_net.forward(state.unsqueeze(0))
@@ -118,10 +120,13 @@ class DQN:
         return probs
         
     def _get_action(self, state, epsilon):
+        if self.env_type == 'image': 
+            oned_state, state = state
+            
         action = np.random.choice(
             self.actions, 
             p=self._get_action_probs(
-                state,
+                FT(state),
                 epsilon,
             ),
         ) 
@@ -133,14 +138,19 @@ class DQN:
         
     def _update_policy(self, state, Q_values):
         # update policy
-        self.policy[tuple(state)] = self.actions[
+        self.policy[tuple(state.tolist())] = self.actions[
             np.argmax(Q_values)
         ]
 
     def _train_one_batch(self, transitions, epsilon):
-        states, actions, rewards, next_states, goal_achieved = zip(*transitions)
+        if self.env_type == 'image':
+            oned_states, states, actions, rewards, oned_next_states, next_states, goal_achieved = zip(*transitions)
+        else:
+            states, actions, rewards, next_states, goal_achieved = zip(*transitions)
+        
         states = FT(states)
         next_states = FT(next_states)
+        
         actions = T([actions]).view(-1, 1)
         rewards = T([rewards]).view(-1, 1)
         goal_achieved = T([goal_achieved]).view(-1, 1).float()
@@ -161,7 +171,11 @@ class DQN:
         self.optimizer.step()
         
         rand = random.randint(0, self.batch_size-1)
-#         self._update_policy(states[rand].detach().numpy(), Q_values[rand].detach().numpy())
+        
+        if self.env_type == 'image':
+            self._update_policy(oned_states[rand], Q_values[rand].detach().numpy())
+        else:
+            self._update_policy(states[rand].detach().numpy(), Q_values[rand].detach().numpy())
         
         return loss
         
@@ -184,18 +198,23 @@ class DQN:
             state = self.env.reset()
             
             while not episode_ended:
-                action, action_idx = self._get_action(FT(state), epsilon)
+                action, action_idx = self._get_action(state, epsilon)
                 _, reward, done, next_state, episode_ended = self.env.step(action=action)
-                
                 episode_reward += reward
                 
-                self._store_transition(
-                    [state, action_idx, reward, next_state, done]
-                )
+                if self.env_type == 'image':
+                    self._store_transition(
+                        [state[0], state[1], action_idx, reward, next_state[0], next_state[1], done]
+                    )
+                else:
+                    self._store_transition(
+                        [state, action_idx, reward, next_state, done]
+                    )
                 
                 if self.replay_memory.current_size > self.memory_size:
                     transitions = self.replay_memory.sample(size=self.batch_size)
-                    episode_loss += self._train_one_batch(transitions, epsilon)
+                    if timestep % self.train_freq == 0:
+                        episode_loss += self._train_one_batch(transitions, epsilon)
                     
                     if self.batch_no % self.w_sync_freq == 0:
                         self._sync_weights()
@@ -204,7 +223,7 @@ class DQN:
                 timestep += 1
                 state = next_state
                 
-            if episode_no % self.log_freq == 0 and self.replay_memory.current_size > self.memory_size:
+            if episode_no % self.log_freq == 0:
                 print(f'Episode: {episode_no}, Reward: {episode_reward}, Loss: {episode_loss}')
                 
             # save logs for analysis
@@ -222,8 +241,8 @@ class DQN:
             policy = self.policy
             
         while not done:
-            action, reward, goal, state, done = self.env.step(
-                action=self.policy[state],
+            action, reward, goal, (state, state_img), done = self.env.step(
+                action=self.policy[tuple(state.tolist())],
             )
             timestep += 1
             
