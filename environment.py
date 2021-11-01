@@ -21,7 +21,7 @@ class GridEnv(OpenAIEnv):
         action_transitions,
         img_size=(64, 64),
         max_timesteps=300,
-        img_state=True,
+        img_state=False,
         full_state=False,
         greyscale=True,
     ):
@@ -310,7 +310,7 @@ class GridEnv(OpenAIEnv):
             fig, _, _ = self._set_figure(self.state)
             state_img = self._get_plot_img(fig)
             state = (state, state_img)
-                                                                   
+                                       
         return action, reward, goal_achieved, state, done
     
     def render(self, show=False):
