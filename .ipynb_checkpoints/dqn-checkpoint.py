@@ -1,4 +1,5 @@
 from collections import defaultdict, deque
+import os
 import random
 
 import numpy as np
@@ -34,6 +35,7 @@ class DQN:
         policy_net,
         optimizer, 
         loss_func,
+        model_path,
         env_type='image',
         log_freq=10,
         tau = 1e-3,
@@ -49,6 +51,8 @@ class DQN:
         epsilon_decay=0.9996,
         epsilon_min=0.01,
         negative_rewards=[-0.75, -0.85, -15.0],
+        load_pretrained=False,
+        save_pretrained=True,
     ):
         self.env = env
         self.env_type = env_type
@@ -57,8 +61,15 @@ class DQN:
         self.states = self.env.states
         self.n_actions = self.env.action_space.n
         self.actions = self.env.actions
+        self.model_path = model_path
         self.policy_net = policy_net
         self.target_net = target_net
+        self.save_pretrained = save_pretrained
+        if load_pretrained and os.path.exists(f'{model_path}/policy_net') and os.path.exists(f'{model_path}/target_net'):
+            print('Pretrained Models loaded')
+            self.policy_net.load_state_dict(torch.load(f'{model_path}/policy_net'))
+            self.target_net.load_state_dict(torch.load(f'{model_path}/target_net'))
+            
         self.memory_size = memory_size
         self.batch_size = batch_size
         self.replay_memory = ReplayMemory(size=memory_size)
@@ -76,16 +87,12 @@ class DQN:
         self.train_freq = train_freq
         self.log_freq = log_freq
         self.batch_no = 0
+        self.load_pretrained = load_pretrained
         
         # initialize action-value function
         self.Q = defaultdict(
             lambda: np.zeros(self.n_actions),
         )
-        
-        # initialize random policy
-        self.policy = {
-            state:np.random.choice(self.actions) for state in self.states
-        }
         
         # initialize traning logs
         self.logs = defaultdict(
@@ -135,12 +142,6 @@ class DQN:
     
     def _store_transition(self, transition):
         self.replay_memory.store(transition)
-        
-    def _update_policy(self, state, Q_values):
-        # update policy
-        self.policy[tuple(state.tolist())] = self.actions[
-            np.argmax(Q_values)
-        ]
 
     def _train_one_batch(self, transitions, epsilon):
         if self.env_type == 'image':
@@ -169,13 +170,6 @@ class DQN:
             param.grad.data.clamp_(-1, 1)
         
         self.optimizer.step()
-        
-        rand = random.randint(0, self.batch_size-1)
-        
-        if self.env_type == 'image':
-            self._update_policy(oned_states[rand], Q_values[rand].detach().numpy())
-        else:
-            self._update_policy(states[rand].detach().numpy(), Q_values[rand].detach().numpy())
         
         return loss
         
@@ -232,17 +226,17 @@ class DQN:
                 self.logs[episode_no]['cumulative_reward'] += \
                 self.logs[episode_no-1]['cumulative_reward']
                 
+        self.save_models()
+                
     def evaluate_one_episode(self, e_num=None, policy=None):
         action_seq = []
         timestep = 0
         done = False
         state = self.env.reset()
-        if not policy:
-            policy = self.policy
             
         while not done:
             action, reward, goal, state, done = self.env.step(
-                action=self.policy[tuple(state[0].tolist())],
+                action=self._get_action(state, 0)[0],
             )
             timestep += 1
             
@@ -256,9 +250,6 @@ class DQN:
         return timestep, action_seq
     
     def evaluate(self, policy=None):
-        if not policy:
-            policy = self.policy
-        
         for n in range(self.eval_episodes):
             timesteps, _ = self.evaluate_one_episode(n, policy)
             self.eval_logs[n]['timesteps'] = timesteps
@@ -266,4 +257,7 @@ class DQN:
             if n > 0:
                 self.eval_logs[n]['cumulative_reward'] += \
                 self.eval_logs[n-1]['cumulative_reward']
-        
+                
+    def save_models(self):
+        torch.save(self.target_net.state_dict(), f'{self.model_path}/target_net')
+        torch.save(self.policy_net.state_dict(), f'{self.model_path}/policy_net')
