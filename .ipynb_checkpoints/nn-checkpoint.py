@@ -4,9 +4,9 @@ import torch.nn.functional as F
 class Net(nn.Module):
     def __init__(self, input_dim, output_dim):
         super().__init__()
-        self.fc1 = nn.Linear(input_dim, 64)
-        self.fc2 = nn.Linear(64, 128)
-        self.out = nn.Linear(128, output_dim)
+        self.fc1 = nn.Linear(input_dim, 32)
+        self.fc2 = nn.Linear(32, 64)
+        self.out = nn.Linear(64, output_dim)
 
     def forward(self, x):
         x = self.fc1(x)

@@ -88,13 +88,14 @@ class QLearning:
         return action, self.actions.index(action)
     
     def _train_one_episode(self, n, epsilon):
-        state = self.env.reset()
+        state = tuple(self.env.reset())
         timesteps = 0
         episode_ended = False
         
         while not episode_ended:
             action, action_idx = self._get_action(state, epsilon)
             _, reward, goal, next_state, episode_ended = self.env.step(action=action)
+            next_state = tuple(next_state)
             
             self.Q[state][action_idx] = self.Q[state][action_idx] + self.step_size * np.float64(
                 reward + (self.gamma * max(self.Q[next_state]) - self.Q[state][action_idx])
@@ -136,7 +137,7 @@ class QLearning:
         action_seq = []
         timestep = 0
         done = False
-        state = self.env.reset()
+        state = tuple(self.env.reset())
         if not policy:
             policy = self.policy
             
@@ -144,6 +145,7 @@ class QLearning:
             action, reward, goal, state, done = self.env.step(
                 action=self.policy[state],
             )
+            state = tuple(state)
             timestep += 1
             
             if e_num is not None:

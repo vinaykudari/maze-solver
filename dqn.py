@@ -226,7 +226,8 @@ class DQN:
                 self.logs[episode_no]['cumulative_reward'] += \
                 self.logs[episode_no-1]['cumulative_reward']
                 
-        self.save_models()
+        if self.save_pretrained:
+            self.save_models()
                 
     def evaluate_one_episode(self, e_num=None, policy=None):
         action_seq = []
