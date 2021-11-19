@@ -282,6 +282,9 @@ class GridEnv(OpenAIEnv):
     
     def step(self, action=None):
         done = False
+        if isinstance(action, int):
+            action = self.actions[action]
+            
         if not action:
             # select random action if no action is provided
             action_idx = np.random.choice(self.action_space.n)
