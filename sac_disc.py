@@ -90,6 +90,8 @@ class SAC:
             'critic_b_optmz',
             Adam(self.critic_b.parameters(), lr=self.lr),
         )
+        
+        self._load_models()
 
         # target critic network
         self.critic_a_tgt = networks.get(
