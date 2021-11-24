@@ -13,7 +13,6 @@ class Actor(nn.Module):
         self.fc2 = nn.Linear(256, action_dim)
 
     def forward(self, state):
-        state.to(self.device)
         output = self.fc1(state)
         output = F.relu(output)
         policy = F.softmax(self.fc2(output), dim=-1)

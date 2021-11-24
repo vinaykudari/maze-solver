@@ -33,20 +33,20 @@ class A2C:
         self.logs = defaultdict(
             lambda: {
                 'reward': 0,
-                'cum_reward': 0,
+                'avg_reward': 0,
             },
         )
         self.eval_logs = defaultdict(
             lambda: {
                 'reward': 0,
-                'cum_reward': 0,
+                'avg_reward': 0,
             },
         )
         
     @staticmethod
     def _normalise(arr):
-        mean = np.mean(arr)
-        std = np.std(arr)
+        mean = arr.mean()
+        std = arr.std()
         arr -= mean
         arr /= (std + 1e-5)
         return arr
@@ -61,9 +61,7 @@ class A2C:
     
         returns = returns[::-1]
         if normalise:
-            returns = self._normalise(returns)
-            
-        return FT(returns)
+            return self._normalise(torch.cat(returns))
     
     def _get_action(self, policy):
         actn = T(policy.sample().item())
@@ -111,14 +109,35 @@ class A2C:
         
         return net_loss, ep_reward
     
+    def evaluate(self, ep=None):
+        if not ep:
+            ep = self.eval_ep
+
+        for ep_no in range(ep):
+            state = self.env.reset()
+            state = FT(state)
+            ep_ended = False
+            ep_reward = 0
+            ts = 0
+
+            while not ep_ended and ts < 200:
+                policy = self.actor(state)
+                actn, actn_log_prob = self._get_action(policy)
+                _, reward, done, nxt_state, ep_ended = self.env.step(actn.item())
+                ep_reward += reward
+                state = FT(nxt_state)
+
+            self.eval_logs[ep_no]['reward'] = ep_reward
+    
     def run(self, ep=1000):
+        rewards = []
         for ep_no in range(ep):
             ep_loss, ep_reward = self.train()
-            
+
+            rewards.append(ep_reward)
+            avg_reward = np.mean(rewards[-50:])
             self.logs[ep_no]['reward'] = ep_reward
-            if ep_no > 0:
-                self.logs[ep_no]['cum_reward'] += \
-                self.logs[ep_no-1]['cum_reward']
+            self.logs[ep_no]['avg_reward'] = avg_reward
             
             if ep_no % self.log_freq == 0:
                 print(f'Episode: {ep_no}, Loss: {ep_loss}, Avg. Reward: {ep_reward}')
