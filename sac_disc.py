@@ -4,6 +4,7 @@ import numpy as np
 from pathlib import Path
 import torch
 import torch.nn.functional as F
+from torch.nn.utils import clip_grad_norm_
 from torch import FloatTensor as FT, tensor as T
 from torch.optim import Adam
 
@@ -36,10 +37,10 @@ class SAC:
         self.action_space = env.action_space
         self.hyprprms = hyprprms
         self.eps = self.hyprprms.get('eps', 1e-6)
-        self.lr = self.hyprprms.get('lr', 5e-4)
-        self.gamma = self.hyprprms.get('gamma', 0.99)
+        self.lr = self.hyprprms.get('lr', 0.01)
+        self.gamma = self.hyprprms.get('gamma', 0.9995)
         self.eval_ep = self.hyprprms.get('eval_ep', 50)
-        self.mem_sz = self.hyprprms.get('mem_sz', 5000)
+        self.mem_sz = self.hyprprms.get('mem_sz', 20000)
         self.critic_sync_f = self.hyprprms.get('critic_sync_f', 5)
         self.tau = self.hyprprms.get('tau', 1e-2)
         self.save_mdls = save_mdls
@@ -90,8 +91,6 @@ class SAC:
             'critic_b_optmz',
             Adam(self.critic_b.parameters(), lr=self.lr),
         )
-        
-        self._load_models()
 
         # target critic network
         self.critic_a_tgt = networks.get(
@@ -142,18 +141,11 @@ class SAC:
         actions, _, _ = self.policy.sample(state)
         return actions.cpu().detach().numpy()
 
-    def _sync_weights(self, src, tgt, tau=None):
-        if tau is None:
-            tau = self.tau
-
-        tgt_weights = dict(tgt.named_parameters())
-        src_weights = dict(src.named_parameters())
-
-        for name in src_weights:
-            src_weights[name] = tau * src_weights[name].clone() + \
-                    (1-tau) * tgt_weights[name].clone()
-
-        tgt.load_state_dict(src_weights)
+    def _sync_weights(self, src, tgt):
+        for target_param, local_param in zip(tgt.parameters(), src.parameters()):
+            target_param.data.copy_(
+                self.tau * local_param.data + (1.0 - self.tau) * target_param.data
+            )
 
     def _save_models(
         self,
@@ -202,9 +194,8 @@ class SAC:
             critic_b_path = path/'critic_b'
             self.critic_b.load(critic_b_path)
 
-    def _train_alpha_net(self, probs, log_probs):
-        temp = torch.sum(log_probs * probs, dim=1)
-        alpha_loss = - (self.log_alpha.exp() * (temp.detach() + self.tgt_entropy)).mean()
+    def _get_alpha_loss(self, log_probs):
+        alpha_loss = - (self.log_alpha.exp() * (self.tgt_entropy + log_probs.detach())).mean()
         self.alpha_optimizer.zero_grad()
         alpha_loss.backward()
         self.alpha_optimizer.step()
@@ -212,76 +203,78 @@ class SAC:
 
         return alpha_loss.cpu().detach().numpy()
 
-    def _train_critic_net(self, states, actions, rewards, nxt_states, dones):
+    def _get_critic_loss(self, states, actions, rewards, nxt_states, dones):
         with torch.no_grad():
-            actions, probs, log_probs = self.policy.sample(nxt_states)
+            _, probs, log_probs = self.policy.sample(nxt_states)
             q1_target = self.critic_a_tgt(nxt_states)
             q2_target = self.critic_b_tgt(nxt_states)
-            etp_min_q_vals = torch.min(q1_target, q2_target) - self.alpha * log_probs
-            nxt_v_target = (probs * (etp_min_q_vals)).sum(1).unsqueeze(-1)
-            q_backup = rewards.unsqueeze(-1) + (self.gamma * (~dones.unsqueeze(-1)) * nxt_v_target)
+            min_q_vals = torch.min(q1_target, q2_target) 
+            next_q = ((probs * min_q_vals) - self.alpha * log_probs).sum(1).unsqueeze(-1)
+            target_q = rewards.unsqueeze(-1) + self.gamma * (1 - dones.unsqueeze(-1)) * next_q
 
-        pred_q1_values = self.critic_a(states).gather(1, actions.unsqueeze(-1))
-        pred_q2_values = self.critic_b(states).gather(1, actions.unsqueeze(-1))
+        pred_q1_values = self.critic_a(states).gather(1, actions.unsqueeze(-1).long())
+        pred_q2_values = self.critic_b(states).gather(1, actions.unsqueeze(-1).long())
 
-        critic_a_loss = 0.5 * F.mse_loss(pred_q1_values, q_backup)
-        critic_b_loss = 0.5 * F.mse_loss(pred_q2_values, q_backup)
+        critic_a_loss = F.mse_loss(pred_q1_values, target_q)
+        critic_b_loss = F.mse_loss(pred_q2_values, target_q)
 
         self.critic_a_optmz.zero_grad()
         self.critic_b_optmz.zero_grad()
 
-        critic_a_loss.backward(retain_graph=True)
+        critic_a_loss.backward()
+        clip_grad_norm_(self.critic_a.parameters(), 1)
         critic_b_loss.backward()
+        clip_grad_norm_(self.critic_b.parameters(), 1)
 
         self.critic_a_optmz.step()
         self.critic_b_optmz.step()
 
-        return ((critic_a_loss + critic_b_loss)/2).cpu().detach().numpy()
-
-    def _train_policy_net(self, states, alpha):
-        actions, probs, log_probs = self.policy.sample(states)
+    def _get_policy_loss(self, states, alpha):
+        _, probs, log_probs = self.policy.sample(states)
         with torch.no_grad():
             pred_q1_values = self.critic_a(states)
             pred_q2_values = self.critic_b(states)
+            min_q_values = torch.min(pred_q1_values, pred_q2_values)
 
-        min_q_values = torch.min(pred_q1_values, pred_q2_values)
-        policy_loss = (probs * (self.alpha * log_probs - min_q_values)).sum(1).mean()
+        inside_term = alpha * log_probs - min_q_values
+        policy_loss = (probs * inside_term).sum(dim=1).mean()
+        log_action_pi = torch.sum(log_probs * probs, dim=1)
 
         self.policy_optmz.zero_grad()
         policy_loss.backward()
         self.policy_optmz.step()
 
-        return policy_loss.cpu().detach().numpy(), probs, log_probs
+        return policy_loss.cpu().detach().numpy(), log_action_pi
 
     def train(self, ep_no):
         states, actions, rewards, nxt_states, dones = \
             self.memory.sample(self.mem_sz)
-   
-        rewards = torch.from_numpy(rewards).float()
-        dones = torch.from_numpy(dones)
-        actions = torch.from_numpy(actions).float()
-        states = torch.from_numpy(states).float()
-        nxt_states = torch.from_numpy(nxt_states).float()
 
-        curr_alpha = self.alpha
-        critic_loss = self._train_critic_net(
+        rewards = T(rewards, dtype=torch.float, device=DEVICE)
+        dones = T(dones, dtype=torch.float, device=DEVICE)
+        nxt_states = T(nxt_states, dtype=torch.float, device=DEVICE)
+        states = T(states, dtype=torch.float, device=DEVICE)
+        actions = T(actions, dtype=torch.float, device=DEVICE)
+
+        curr_alpha = self.alpha.clone()
+        policy_loss, log_probs = self._get_policy_loss(
+            states,
+            curr_alpha,
+        )
+        alpha_loss = self._get_alpha_loss(log_probs)
+        self._get_critic_loss(
             states,
             actions,
             rewards,
             nxt_states,
             dones,
         )
-        policy_loss, probs, log_probs = self._train_policy_net(
-            states,
-            curr_alpha,
-        )
-        alpha_loss = self._train_alpha_net(probs, log_probs)
-
-        if ep_no % self.critic_sync_f:
+        
+        if ep_no % self.critic_sync_f == 0:
             self._sync_weights(self.critic_a, self.critic_a_tgt)
             self._sync_weights(self.critic_b, self.critic_b_tgt)
 
-        return alpha_loss, critic_loss, policy_loss
+        return alpha_loss, policy_loss
     
     def evaluate(self, ep=None):
         if not ep:
@@ -289,13 +282,15 @@ class SAC:
 
         for ep_no in range(ep):
             state = self.env.reset()
+            state = T(state, device=DEVICE)
             ep_ended = False
             ep_reward = 0
             ts = 0
 
             while not ep_ended and ts < 200:
                 action = self._get_action(state)
-                nxt_state, reward, ep_ended, _ = self.env.step(action)
+                nxt_state, reward, ep_ended, _ = self.env.step(action.item())
+                nxt_state = T(nxt_state, device=DEVICE)
                 ep_reward += reward
                 state = nxt_state
 
@@ -318,7 +313,7 @@ class SAC:
             state = self.env.reset()
             ep_ended = False
             ep_reward = 0
-            a_loss, c_loss, p_loss = 0, 0, 0
+            a_loss, p_loss = 0, 0
             ts = 0
 
             while not ep_ended and ts < 200:
@@ -333,7 +328,7 @@ class SAC:
                 state = nxt_state
 
                 if self.memory.curr_size > self.mem_sz:
-                    a_loss, c_loss, p_loss = self.train(ep_no)
+                    a_loss, p_loss = self.train(ep_no)
                     if ep_no % 100:
                         self._save_models()
                 ts += 1
@@ -348,6 +343,7 @@ class SAC:
                     print(f'Episode: {ep_no}, Reward: {ep_reward}, Avg. Reward: {avg_reward}, Policy Loss={round(float(p_loss), 2)}')
                 else:
                     print(ep_no, end='..')
+
 
 
 
