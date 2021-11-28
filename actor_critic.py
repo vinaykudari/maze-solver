@@ -71,21 +71,23 @@ class A2C:
     def train(self):
         exp = []
         state = self.env.reset()
-        ep_ended = False
+        done = False
         ep_reward = 0
         state = FT(state)
+        step_count = 0
         
-        while not ep_ended:
+        while not done and ep_reward > -500:
             policy = self.actor(state)
             actn, actn_log_prob = self._get_action(policy)
             state_val = self.critic(state)
                 
-            _, reward, done, nxt_state, ep_ended = self.env.step(action=actn.item())
+            nxt_state, reward, done, _ = self.env.step(action=actn.item())
             nxt_state = FT(nxt_state)
             exp.append((nxt_state, state_val, T([reward]), actn_log_prob))
             ep_reward += reward
             
             state = nxt_state
+            step_count += 1
             
         states, state_vals, rewards, actn_log_probs = zip(*exp)
         actn_log_probs = torch.cat(actn_log_probs)
@@ -123,7 +125,7 @@ class A2C:
             while not ep_ended and ts < 200:
                 policy = self.actor(state)
                 actn, actn_log_prob = self._get_action(policy)
-                _, reward, done, nxt_state, ep_ended = self.env.step(actn.item())
+                nxt_state, reward, done, _ = self.env.step(actn.item())
                 ep_reward += reward
                 state = FT(nxt_state)
 
