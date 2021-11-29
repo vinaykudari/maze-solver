@@ -9,8 +9,8 @@ class Actor(nn.Module):
         self.device = torch.device(
             'cuda' if torch.cuda.is_available() else 'cpu'
         )
-        self.fc1 = nn.Linear(state_dim, 256)
-        self.fc2 = nn.Linear(256, action_dim)
+        self.fc1 = nn.Linear(state_dim, 32)
+        self.fc2 = nn.Linear(32, action_dim)
 
     def forward(self, state):
         output = self.fc1(state)
